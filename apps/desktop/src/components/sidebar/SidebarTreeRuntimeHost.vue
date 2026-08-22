@@ -138,7 +138,7 @@ import {
   type DropObjectSqlOptions,
   type TableChildObjectType,
 } from "@/lib/database/dbAdminSql";
-import { buildRenameObjectSql, buildRenameDatabaseSql, buildRenameDatabasePreflightSql, supportsDatabaseRename, supportsObjectRename, type RenameableObjectType } from "@/lib/table/objectRenameSql";
+import { buildRenameObjectSql, buildRenameDatabaseSql, buildRenameDatabasePreflightSql, databaseRenameMaintenanceDatabase, supportsDatabaseRename, supportsObjectRename, type RenameableObjectType } from "@/lib/table/objectRenameSql";
 import { buildEditableObjectSource, buildRoutineRenameObjectSourceStatements, supportsSourceBackedRoutineRename } from "@/lib/table/objectSourceEditor";
 import { loadEditableObjectSourceForEditor } from "@/lib/table/objectSourceLoad";
 import { buildViewDdl } from "@/lib/table/viewDdl";
@@ -2550,6 +2550,7 @@ async function executeTreeNodeSqlWithProductionGuard(
     executeAsScript?: boolean;
     executionId?: string;
     isCancelledBeforeDispatch?: () => boolean;
+    beforeExecute?: () => Promise<void>;
     markDispatched?: () => void;
   } = {},
 ) {
@@ -2568,10 +2569,12 @@ async function executeTreeNodeSqlWithProductionGuard(
     database,
     sql,
     source: t("production.sourceSidebar"),
-    execute: () => {
+    execute: async () => {
       // The caller may have observed a cancel click while we were still
       // waiting on connection setup or the production-safety confirmation
       // above — if so, never actually dispatch the SQL to the backend.
+      if (options.isCancelledBeforeDispatch?.()) throw new Error("Operation cancelled before it was sent to the database.");
+      await options.beforeExecute?.();
       if (options.isCancelledBeforeDispatch?.()) throw new Error("Operation cancelled before it was sent to the database.");
       options.markDispatched?.();
       return options.executeAsScript ? api.executeScript(node.connectionId!, database, sql, options.schema ?? node.schema) : api.executeQuery(node.connectionId!, database, sql, options.schema ?? node.schema, executionId, { timeoutSecs });
@@ -2642,12 +2645,13 @@ async function confirmRenameObject() {
 
     // Database rename path
     if (node.type === "database") {
+      const maintenanceDatabase = databaseRenameMaintenanceDatabase(connectionStore.getConfig(node.connectionId)?.database, node.label);
       // Preflight: check permissions, prepared transactions, and active connections
       const preflightSql = await buildRenameDatabasePreflightSql({
         databaseType: dbType,
         databaseName: node.label,
       });
-      const preflightResult = await api.executeQuery(node.connectionId, "postgres", preflightSql);
+      const preflightResult = await api.executeQuery(node.connectionId, maintenanceDatabase, preflightSql);
       let activeConnections = 0;
       let preparedTransactions = 0;
       let isOwner = false;
@@ -2673,7 +2677,12 @@ async function confirmRenameObject() {
         newName,
         terminateConnections: activeConnections > 0,
       });
-      await executeTreeNodeSqlWithProductionGuard(node, sql, { database: "postgres" });
+      const executed = await executeTreeNodeSqlWithProductionGuard(node, sql, {
+        database: maintenanceDatabase,
+        executeAsScript: true,
+        beforeExecute: () => connectionStore.closeDatabaseConnection(node.connectionId!, node.label),
+      });
+      if (executed === undefined) return;
       renameApplied = true;
       toast(t("contextMenu.renameObjectSuccess", { oldName: node.label, newName }), 3000);
       showRenameObjectDialog.value = false;

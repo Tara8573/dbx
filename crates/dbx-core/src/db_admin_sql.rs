@@ -922,7 +922,6 @@ pub fn supports_database_rename(database_type: Option<DatabaseType>) -> bool {
                 | DatabaseType::Uxdb
                 | DatabaseType::Vastbase
                 | DatabaseType::OpenGauss
-                | DatabaseType::Yashandb
         )
     )
 }
@@ -2531,7 +2530,6 @@ mod tests {
             DatabaseType::Highgo,
             DatabaseType::Vastbase,
             DatabaseType::OpenGauss,
-            DatabaseType::Yashandb,
             DatabaseType::Redshift,
         ] {
             assert!(supports_database_rename(Some(db_type)), "{db_type:?} should support database rename");

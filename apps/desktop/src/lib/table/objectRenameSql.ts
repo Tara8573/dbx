@@ -35,10 +35,15 @@ export function buildRenameObjectSql(options: BuildRenameObjectSqlOptions): Prom
 
 // ── Database rename (PostgreSQL family) ──
 
-const DATABASE_RENAME_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "kwdb", "kingbase", "highgo", "uxdb", "vastbase", "opengauss", "yashandb"]);
+const DATABASE_RENAME_TYPES = new Set<DatabaseType>(["postgres", "redshift", "gaussdb", "kwdb", "kingbase", "highgo", "uxdb", "vastbase", "opengauss"]);
 
 export function supportsDatabaseRename(databaseType?: DatabaseType): boolean {
   return !!databaseType && DATABASE_RENAME_TYPES.has(databaseType);
+}
+
+export function databaseRenameMaintenanceDatabase(configuredDatabase: string | undefined, targetDatabase: string): string {
+  if (configuredDatabase && configuredDatabase !== targetDatabase) return configuredDatabase;
+  return targetDatabase === "postgres" ? "template1" : "postgres";
 }
 
 export interface BuildRenameDatabaseSqlOptions {
