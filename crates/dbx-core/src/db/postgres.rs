@@ -5708,6 +5708,20 @@ pub(crate) fn postgres_statement_returns_rows(sql: &str) -> bool {
     }
 }
 
+/// Returns true when `sql` contains multiple statements, which PostgreSQL's
+/// extended query protocol (prepared statements) rejects. Multi-statement
+/// scripts must be dispatched via the simple query protocol instead.
+fn is_postgres_multi_statement_sql(sql: &str) -> bool {
+    match Parser::parse_sql(&PostgreSqlDialect {}, sql) {
+        Ok(statements) => statements.len() > 1,
+        Err(_) => {
+            // Fallback heuristic: if sqlparser cannot parse the dialect,
+            // treat semicolon-separated non-empty chunks as multi-statement.
+            sql.split(';').filter(|s| !s.trim().is_empty()).count() > 1
+        }
+    }
+}
+
 pub async fn execute_query(pool: &Pool, sql: &str) -> Result<QueryResult, String> {
     execute_query_with_max_rows(pool, sql, None).await
 }
@@ -5720,7 +5734,27 @@ pub async fn execute_query_with_max_rows(
     let start = Instant::now();
     let row_limit = query_result_row_limit(max_rows);
 
-    if postgres_statement_returns_rows(sql) {
+    if is_postgres_multi_statement_sql(sql) {
+        let client = checkout_postgres_client(pool, None, super::connection_timeout()).await?;
+        client.batch_execute(sql).await.map_err(pg_error_to_string)?;
+        clear_postgres_caches_after_ddl(pool, Some(&client), sql);
+
+        Ok(QueryResult {
+            columns: vec![],
+            column_types: Vec::new(),
+            column_sortables: Vec::new(),
+            spatial_columns: vec![],
+            spatial_values: vec![],
+            rows: vec![],
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+            session_id: None,
+            has_more: false,
+            elasticsearch_raw_body: None,
+            messages: Vec::new(),
+        })
+    } else if postgres_statement_returns_rows(sql) {
         let client = checkout_postgres_client(pool, None, super::connection_timeout()).await?;
         execute_select_query(&client, sql, start, row_limit).await
     } else {
@@ -6472,7 +6506,26 @@ async fn execute_query_with_max_rows_inner(
     // are attached to its result.
     let _ = drain_postgres_notices(client).await;
 
-    let result = if postgres_statement_returns_rows(sql) {
+    let result = if is_postgres_multi_statement_sql(sql) {
+        // PostgreSQL's extended query protocol (prepared statements) rejects
+        // multiple commands in a single statement. Use batch_execute (simple
+        // query protocol) for multi-statement scripts.
+        client.batch_execute(sql).await.map_err(pg_error_to_string).map(|_| QueryResult {
+            columns: vec![],
+            column_types: Vec::new(),
+            column_sortables: Vec::new(),
+            spatial_columns: vec![],
+            spatial_values: vec![],
+            rows: vec![],
+            affected_rows: 0,
+            execution_time_ms: start.elapsed().as_millis(),
+            truncated: false,
+            session_id: None,
+            has_more: false,
+            elasticsearch_raw_body: None,
+            messages: Vec::new(),
+        })
+    } else if postgres_statement_returns_rows(sql) {
         if prefer_text_protocol {
             execute_select_text(client, sql, start, row_limit, None, progress_clock.as_deref()).await
         } else {
