@@ -5653,7 +5653,7 @@ mod tests {
             included_columns: overrides.included_columns,
             comment: overrides.comment,
             key_is_expression: overrides.key_is_expression,
-            column_opclasses: vec![],
+            column_opclasses: overrides.column_opclasses,
         }
     }
 

@@ -7566,7 +7566,7 @@ fn postgres_gin_index_with_explicit_opclass_generates_opclass_in_ddl() {
     assert!(result.warnings.is_empty());
     let sql = result.statements.join("\n");
     assert!(sql.contains(r#""name" gin_trgm_ops"#), "Expected opclass in DDL, got: {sql}");
-    assert!(sql.contains("USING gin"), "Expected USING gin, got: {sql}");
+    assert!(sql.contains("USING GIN"), "Expected USING GIN, got: {sql}");
 }
 
 #[test]
@@ -7714,59 +7714,19 @@ fn postgres_gin_text_column_with_explicit_opclass_no_warning() {
 }
 
 #[test]
-fn postgres_expression_index_skips_opclass() {
-    // Expression columns don't get opclass appended.
+fn postgres_expression_index_appends_opclass() {
+    // The per-column `pg_get_indexdef(indexrelid, colno, pretty)` returns only the
+    // bare expression (PostgreSQL sets `attrsOnly = (colno != 0)`, so the
+    // opclass/COLLATE/DESC block is skipped — see `ruleutils.c` and the note on
+    // `list_indexes_with_sql`). The opclass is read separately from `indclass`
+    // into `column_opclasses`, so the generator must append it to an expression
+    // key just like a real column.
     let mut idx = index("idx_lower_email", &["lower(email)"]);
+    idx.index_type = "GIN".to_string();
     idx.column_opclasses = vec![Some("gin_trgm_ops".to_string())];
     idx.original = Some(IndexInfo {
         name: "idx_lower_email".to_string(),
         columns: vec!["lower(email)".to_string()],
-        is_unique: false,
-        is_primary: false,
-        filter: None,
-        index_type: None,
-        included_columns: None,
-        comment: None,
-        key_is_expression: vec![true],
-        column_opclasses: vec![None],
-    });
-
-    let result = build_table_structure_change_sql(index_change_options(DatabaseType::Postgres, Some("public"), idx));
-
-    assert!(result.warnings.is_empty());
-    let sql = result.statements.join("\n");
-    // Expression key part should NOT have " gin_trgm_ops" appended.
-    assert!(!sql.contains("lower(email) gin_trgm_ops"), "Expression should not have opclass appended, got: {sql}");
-}
-
-#[test]
-fn postgres_jsonb_gin_with_jsonb_path_ops() {
-    let mut idx = index("idx_metadata", &["metadata"]);
-    idx.index_type = "GIN".to_string();
-    idx.column_opclasses = vec![Some("jsonb_path_ops".to_string())];
-
-    let result = build_table_structure_change_sql(index_change_options(DatabaseType::Postgres, Some("public"), idx));
-
-    assert!(result.warnings.is_empty());
-    let sql = result.statements.join("\n");
-    assert!(sql.contains(r#""metadata" jsonb_path_ops"#), "Expected jsonb_path_ops in DDL, got: {sql}");
-    assert!(sql.contains("USING gin"), "Expected USING gin, got: {sql}");
-}
-
-#[test]
-fn postgres_expression_index_preserves_opclass_embedded_in_text() {
-    // PostgreSQL introspection bundles an expression key's operator class inside
-    // the `pg_get_indexdef` text (e.g. `lower(email) gin_trgm_ops`) and reads
-    // `NULL` for that position's `column_opclasses` — see the note on
-    // `list_indexes_with_sql`. The verbatim expression path must emit the text
-    // as-is so the opclass survives a rebuild; appending a separate opclass would
-    // duplicate it (`lower(email) gin_trgm_ops gin_trgm_ops`).
-    let mut idx = index("idx_lower_email_trgm", &["lower(email) gin_trgm_ops"]);
-    idx.index_type = "GIN".to_string();
-    idx.column_opclasses = vec![None];
-    idx.original = Some(IndexInfo {
-        name: "idx_lower_email_trgm_old".to_string(), // different name → forces rebuild
-        columns: vec!["lower(email) gin_trgm_ops".to_string()],
         is_unique: false,
         is_primary: false,
         filter: None,
@@ -7781,9 +7741,55 @@ fn postgres_expression_index_preserves_opclass_embedded_in_text() {
 
     assert!(result.warnings.is_empty());
     let sql = result.statements.join("\n");
-    assert!(sql.contains("lower(email) gin_trgm_ops"), "Expected expression opclass preserved verbatim, got: {sql}");
+    assert!(sql.contains("lower(email) gin_trgm_ops"), "Expression should have opclass appended, got: {sql}");
+}
+
+#[test]
+fn postgres_jsonb_gin_with_jsonb_path_ops() {
+    let mut idx = index("idx_metadata", &["metadata"]);
+    idx.index_type = "GIN".to_string();
+    idx.column_opclasses = vec![Some("jsonb_path_ops".to_string())];
+
+    let result = build_table_structure_change_sql(index_change_options(DatabaseType::Postgres, Some("public"), idx));
+
+    assert!(result.warnings.is_empty());
+    let sql = result.statements.join("\n");
+    assert!(sql.contains(r#""metadata" jsonb_path_ops"#), "Expected jsonb_path_ops in DDL, got: {sql}");
+    assert!(sql.contains("USING GIN"), "Expected USING GIN, got: {sql}");
+}
+
+#[test]
+fn postgres_expression_index_opclass_round_trips_from_indclass() {
+    // Real PostgreSQL introspection: the expression text from
+    // `pg_get_indexdef(indexrelid, colno, false)` is the BARE expression
+    // (`attrsOnly = (colno != 0)` drops the opclass block — see `ruleutils.c`).
+    // The opclass is read separately from `pg_index.indclass` (schema-qualified)
+    // into `column_opclasses`, so the generator appends it to the bare expression
+    // rather than expecting it to be embedded in the text.
+    let mut idx = index("idx_lower_email_trgm", &["lower(email)"]);
+    idx.index_type = "GIN".to_string();
+    idx.column_opclasses = vec![Some("public.gin_trgm_ops".to_string())];
+    idx.original = Some(IndexInfo {
+        name: "idx_lower_email_trgm_old".to_string(), // different name → forces rebuild
+        columns: vec!["lower(email)".to_string()],
+        is_unique: false,
+        is_primary: false,
+        filter: None,
+        index_type: Some("gin".to_string()),
+        included_columns: None,
+        comment: None,
+        key_is_expression: vec![true],
+        column_opclasses: vec![Some("public.gin_trgm_ops".to_string())],
+    });
+
+    let result = build_table_structure_change_sql(index_change_options(DatabaseType::Postgres, Some("public"), idx));
+
+    assert!(result.warnings.is_empty());
+    let sql = result.statements.join("\n");
     assert!(
-        !sql.contains("lower(email) gin_trgm_ops gin_trgm_ops"),
-        "Opclass must not be duplicated for expression keys, got: {sql}"
+        sql.contains("lower(email) public.gin_trgm_ops"),
+        "Expected bare expression + schema-qualified opclass, got: {sql}"
     );
+    // The bare expression text no longer carries the opclass, so it cannot be duplicated.
+    assert!(!sql.contains("gin_trgm_ops gin_trgm_ops"), "Opclass must not be duplicated, got: {sql}");
 }

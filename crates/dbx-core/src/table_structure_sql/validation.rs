@@ -133,7 +133,7 @@ fn validate_gin_opclass_warnings(options: &TableStructureSqlOptions, warnings: &
 
     for index in options.indexes.iter().filter(|idx| {
         !idx.marked_for_drop
-            && clean(&idx.index_type).to_ascii_uppercase() == "GIN"
+            && clean(&idx.index_type).eq_ignore_ascii_case("GIN")
             && (idx.original.is_none() || has_existing_index_change(idx))
     }) {
         for (i, col) in index.columns.iter().enumerate() {

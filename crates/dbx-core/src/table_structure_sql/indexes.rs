@@ -139,8 +139,8 @@ fn index_opclasses_changed(
             return true;
         }
         return next.iter().zip(previous.iter()).any(|(n, p)| {
-            let n_flat = n.as_deref().map(|v| clean(v)).filter(|v| !v.is_empty());
-            let p_flat = p.as_deref().map(|v| clean(v)).filter(|v| !v.is_empty());
+            let n_flat = n.as_deref().map(clean).filter(|v| !v.is_empty());
+            let p_flat = p.as_deref().map(clean).filter(|v| !v.is_empty());
             n_flat != p_flat
         });
     }
@@ -210,17 +210,18 @@ fn mysql_index_column_sql(column: &str) -> String {
 }
 
 fn postgres_index_column_sql(column: &str, is_expression: bool, opclass: Option<&str>) -> String {
-    // Expression/functional index key parts arrive as raw expression text, not a plain
-    // column name; quoting the whole expression as an identifier turns it into a literal
-    // column reference that doesn't exist (#6295).
-    if is_expression {
-        column.trim().to_string()
-    } else {
-        let base = quote_ident(StructureDialect::Postgres, column.trim());
-        match opclass.filter(|o| !o.is_empty()) {
-            Some(opc) => format!("{} {}", base, opc),
-            None => base,
-        }
+    // The base key text: a real column is quoted as an identifier; an expression/functional
+    // key part arrives as raw expression text (from the per-column `pg_get_indexdef`, which
+    // omits the opclass — see `list_indexes_with_sql`), so quoting the whole thing as an
+    // identifier would turn it into a nonexistent column reference (#6295).
+    let base =
+        if is_expression { column.trim().to_string() } else { quote_ident(StructureDialect::Postgres, column.trim()) };
+    // The opclass is read separately from `pg_index.indclass` for every key position
+    // (including expression keys) and appended uniformly — it never lives inside the
+    // expression text, so there is no duplication risk.
+    match opclass.filter(|o| !o.is_empty()) {
+        Some(opc) => format!("{} {}", base, opc),
+        None => base,
     }
 }
 
@@ -277,9 +278,9 @@ fn key_expression_flags(index: &EditableStructureIndex, columns: &[String]) -> V
 fn key_opclasses(index: &EditableStructureIndex, columns: &[String]) -> Vec<Option<String>> {
     if !index.column_opclasses.is_empty()
         && index.column_opclasses.len() == columns.len()
-        && index.original.as_ref().map_or(true, |original| original.column_opclasses != index.column_opclasses)
+        && index.original.as_ref().is_none_or(|original| original.column_opclasses != index.column_opclasses)
     {
-        return index.column_opclasses.iter().cloned().collect();
+        return index.column_opclasses.to_vec();
     }
     let original = match &index.original {
         Some(original) if !original.column_opclasses.is_empty() => original,

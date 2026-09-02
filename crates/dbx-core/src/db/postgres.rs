@@ -3829,7 +3829,7 @@ fn postgres_indexes_for_relations_query_tiers() -> [&'static str; 2] {
 fn postgres_indexes_for_relations_sql() -> &'static str {
     "SELECT t.oid::bigint AS relid, i.relname AS index_name, \
              array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
-             array_agg(CASE WHEN a.attname IS NULL THEN NULL WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
+             array_agg(CASE WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
              (ix.indisunique AND ix.indisvalid) AS is_unique, \
              ix.indisprimary AS is_primary, \
              pg_get_expr(ix.indpred, ix.indrelid) AS filter_expr, \
@@ -3865,8 +3865,7 @@ fn postgres_indexes_for_relations_compat_sql() -> &'static str {
                ORDER BY pos.n \
              ) AS columns, \
              ARRAY( \
-               SELECT CASE WHEN a.attname IS NULL THEN NULL \
-                           WHEN oc.opcdefault THEN NULL \
+               SELECT CASE WHEN oc.opcdefault THEN NULL \
                            ELSE oc.opcname \
                       END \
                FROM generate_series(1, array_length(string_to_array(ix.indkey::text, ' '), 1)) AS pos(n) \
@@ -7324,7 +7323,7 @@ async fn execute_query_with_max_rows_inner(
 // (schema, table) instead of a batch of oids — see the note there.
 const POSTGRES_INDEXES_SQL: &str = "SELECT i.relname AS index_name, \
              array_agg(COALESCE(a.attname, pg_get_indexdef(ix.indexrelid, k.n::int, false)) ORDER BY k.n) AS columns, \
-             array_agg(CASE WHEN a.attname IS NULL THEN NULL WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
+             array_agg(CASE WHEN oc.opcdefault THEN NULL ELSE quote_ident(opcns.nspname) || '.' || quote_ident(oc.opcname) END ORDER BY k.n) AS column_opclasses, \
              (ix.indisunique AND ix.indisvalid) AS is_unique, \
              ix.indisprimary AS is_primary, \
              pg_get_expr(ix.indpred, ix.indrelid) AS filter_expr, \
@@ -7359,8 +7358,7 @@ const POSTGRES_INDEXES_COMPAT_SQL: &str = "SELECT i.relname AS index_name, \
                ORDER BY pos.n \
              ) AS columns, \
              ARRAY( \
-               SELECT CASE WHEN a.attname IS NULL THEN NULL \
-                           WHEN oc.opcdefault THEN NULL \
+               SELECT CASE WHEN oc.opcdefault THEN NULL \
                            ELSE oc.opcname \
                       END \
                FROM generate_series(1, array_length(string_to_array(ix.indkey::text, ' '), 1)) AS pos(n) \
@@ -7474,10 +7472,12 @@ pub(crate) async fn postgres_relation_relkind(
 /// `pg_index.indclass`. For each key column position, the schema-qualified
 /// opclass (`quote_ident(nspname) || '.' || quote_ident(opcname)`) is returned
 /// unless the class is the type's default (`oc.opcdefault`), so DDL regeneration
-/// resolves the opclass regardless of `search_path`. Expression columns (where
-/// `a.attname IS NULL`) always have `NULL` for opclass — their operator class is
-/// embedded in the `pg_get_indexdef` expression text, which the generator emits
-/// verbatim (appending a separate opclass would duplicate it).
+/// resolves the opclass regardless of `search_path`. This applies to every key
+/// position, including expression keys (`a.attname IS NULL`): the per-column
+/// `pg_get_indexdef(indexrelid, colno, pretty)` call returns only the bare
+/// expression text (PostgreSQL sets `attrsOnly = (colno != 0)`, so the
+/// opclass/COLLATE/DESC block is skipped — see `ruleutils.c`), so the opclass
+/// must be read from `indclass` rather than parsed out of that text.
 async fn list_indexes_with_sql(
     client: &deadpool_postgres::Client,
     sql: &str,

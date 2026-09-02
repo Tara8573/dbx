@@ -10113,6 +10113,35 @@ mod ddl_tests {
     }
 
     #[test]
+    fn postgres_table_ddl_appends_opclass_to_expression_index_key() {
+        // The per-column `pg_get_indexdef(indexrelid, colno, pretty)` returns only the
+        // bare expression (PostgreSQL sets `attrsOnly = (colno != 0)`, so the opclass
+        // block is skipped — see `ruleutils.c`). The opclass is read separately from
+        // `indclass` into `column_opclasses`, so table DDL must append it to an
+        // expression key just like a real column.
+        let id = column("id", "integer");
+        let indexes = vec![db::IndexInfo {
+            name: "users_lower_email_trgm_idx".to_string(),
+            columns: vec!["lower(email)".to_string()],
+            is_unique: false,
+            is_primary: false,
+            filter: None,
+            index_type: Some("gin".to_string()),
+            included_columns: None,
+            comment: None,
+            key_is_expression: vec![true],
+            column_opclasses: vec![Some("gin_trgm_ops".to_string())],
+        }];
+
+        let ddl = render_postgres_table_ddl("public", "users", &[id], &indexes, &[], None);
+
+        assert!(
+            ddl.contains("USING gin (lower(email) gin_trgm_ops)"),
+            "expected expression key with appended opclass, got: {ddl}"
+        );
+    }
+
+    #[test]
     fn postgres_table_ddl_renders_partition_children_and_subpartitions() {
         let mut id = column("id", "integer");
         id.is_primary_key = true;
@@ -11772,16 +11801,20 @@ fn render_postgres_table_ddl_with_partition_info(
             .iter()
             .enumerate()
             .map(|(i, c)| {
+                // A real column is quoted via `pg_ident`; an expression/functional key part
+                // arrives as raw expression text (the per-column `pg_get_indexdef` omits the
+                // opclass — see `crates/dbx-core/src/db/postgres.rs`), so quoting the whole
+                // thing as an identifier would turn it into a nonexistent column reference
+                // (#6295).
                 let is_expr = idx.key_is_expression.get(i).copied().unwrap_or(false);
-                if is_expr {
-                    c.clone()
-                } else {
-                    let mut col = pg_ident(c);
-                    if let Some(opclass) = idx.column_opclasses.get(i).and_then(|o| o.as_deref()) {
-                        col.push_str(&format!(" {opclass}"));
-                    }
-                    col
+                let mut col = if is_expr { c.clone() } else { pg_ident(c) };
+                // The opclass is read separately from `pg_index.indclass` for every key
+                // position (including expression keys) and appended uniformly — it never
+                // lives inside the expression text, so there is no duplication risk.
+                if let Some(opclass) = idx.column_opclasses.get(i).and_then(|o| o.as_deref()) {
+                    col.push_str(&format!(" {opclass}"));
                 }
+                col
             })
             .collect::<Vec<_>>()
             .join(", ");

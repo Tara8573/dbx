@@ -2004,14 +2004,17 @@ fn sqlserver_row_number_page_sql(
 }
 
 fn postgres_index_column_sql(column: &str, is_expression: bool, opclass: Option<&str>) -> String {
-    if is_expression {
-        column.to_string()
-    } else {
-        let base = quote_identifier(column, &DatabaseType::Postgres);
-        match opclass.filter(|o| !o.is_empty()) {
-            Some(opc) => format!("{base} {opc}"),
-            None => base,
-        }
+    // The base key text: a real column is quoted as an identifier; an expression/functional
+    // key part arrives as raw expression text (the per-column `pg_get_indexdef` omits the
+    // opclass — see `crates/dbx-core/src/db/postgres.rs`), so quoting the whole thing as
+    // an identifier would turn it into a nonexistent column reference (#6295).
+    let base = if is_expression { column.to_string() } else { quote_identifier(column, &DatabaseType::Postgres) };
+    // The opclass is read separately from `pg_index.indclass` for every key position
+    // (including expression keys) and appended uniformly — it never lives inside the
+    // expression text, so there is no duplication risk.
+    match opclass.filter(|o| !o.is_empty()) {
+        Some(opc) => format!("{base} {opc}"),
+        None => base,
     }
 }
 
@@ -11756,14 +11759,19 @@ mod tests {
     }
 
     #[test]
-    fn postgres_index_ddl_expression_skips_opclass() {
+    fn postgres_index_ddl_expression_appends_opclass() {
+        // The per-column `pg_get_indexdef(indexrelid, colno, pretty)` returns only the
+        // bare expression (PostgreSQL sets `attrsOnly = (colno != 0)`, so the opclass
+        // block is skipped — see `ruleutils.c`). The opclass is read separately from
+        // `indclass` into `column_opclasses`, so transfer DDL must append it to an
+        // expression key just like a real column.
         let indexes = vec![db::IndexInfo {
             name: "users_lower_email_idx".to_string(),
             columns: vec!["lower(email)".to_string()],
             is_unique: false,
             is_primary: false,
             filter: None,
-            index_type: None,
+            index_type: Some("gin".to_string()),
             included_columns: None,
             comment: None,
             key_is_expression: vec![true],
@@ -11774,7 +11782,7 @@ mod tests {
 
         assert_eq!(
             sql,
-            vec!["CREATE INDEX IF NOT EXISTS \"users_lower_email_idx\" ON \"public\".\"users\" (lower(email))"
+            vec!["CREATE INDEX IF NOT EXISTS \"users_lower_email_idx\" ON \"public\".\"users\" USING gin (lower(email) gin_trgm_ops)"
                 .to_string()]
         );
     }
