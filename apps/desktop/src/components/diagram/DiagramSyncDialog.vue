@@ -122,7 +122,7 @@ async function copySql() {
 }
 
 async function execute() {
-  if (!sqlText.value || validationErrors.value.length) return;
+  if (!sqlText.value || validationErrors.value.length || warnings.value.length) return;
   executing.value = true;
   execError.value = "";
   try {
@@ -190,7 +190,7 @@ function syncTableLabel(table: DiagramTable): string {
       <DialogFooter class="gap-2 sm:gap-2">
         <Button type="button" variant="outline" size="sm" :disabled="!sqlText" @click="copySql">{{ t("diagram.copySql") }}</Button>
         <Button type="button" variant="ghost" size="sm" @click="openModel = false">{{ t("common.cancel") }}</Button>
-        <Button type="button" size="sm" :disabled="!sqlText || !!validationErrors.length || executing || building" @click="execute">
+        <Button type="button" size="sm" :disabled="!sqlText || !!validationErrors.length || !!warnings.length || executing || building" @click="execute">
           {{ executing ? t("diagram.syncing") : t("diagram.executeSync") }}
         </Button>
       </DialogFooter>

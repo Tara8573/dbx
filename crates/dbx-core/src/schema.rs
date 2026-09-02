@@ -3107,6 +3107,7 @@ mod tests {
             included_columns: None,
             comment: None,
             key_is_expression: Vec::new(),
+            column_opclasses: vec![],
         };
         let mut filtered = index("uq_active_code", &["active_code"], true, false);
         filtered.filter = Some("active = true".to_string());
@@ -8053,6 +8054,7 @@ async fn external_driver_gaussdb_m_indexes(
                     included_columns: None,
                     comment: current_comment.clone(),
                     key_is_expression: current_is_expression.clone(),
+                    column_opclasses: vec![],
                 });
             }
             // Start new index
@@ -8122,6 +8124,7 @@ async fn external_driver_gaussdb_m_indexes(
             included_columns: None,
             comment: current_comment,
             key_is_expression: current_is_expression,
+            column_opclasses: vec![],
         });
     }
 
@@ -10123,6 +10126,7 @@ mod ddl_tests {
             included_columns: None,
             comment: None,
             key_is_expression: Vec::new(),
+            column_opclasses: vec![],
         }];
         let partition_info = db::postgres::PostgresTablePartitionInfo {
             is_partition: true,
@@ -10173,6 +10177,7 @@ mod ddl_tests {
             included_columns: None,
             comment: None,
             key_is_expression: Vec::new(),
+            column_opclasses: vec![],
         }];
         let partition_info = db::postgres::PostgresTablePartitionInfo {
             is_partition: true,
@@ -11762,7 +11767,24 @@ fn render_postgres_table_ddl_with_partition_info(
             continue;
         }
         let unique = if idx.is_unique { "UNIQUE " } else { "" };
-        let cols = idx.columns.iter().map(|c| pg_ident(c)).collect::<Vec<_>>().join(", ");
+        let cols = idx
+            .columns
+            .iter()
+            .enumerate()
+            .map(|(i, c)| {
+                let is_expr = idx.key_is_expression.get(i).copied().unwrap_or(false);
+                if is_expr {
+                    c.clone()
+                } else {
+                    let mut col = pg_ident(c);
+                    if let Some(opclass) = idx.column_opclasses.get(i).and_then(|o| o.as_deref()) {
+                        col.push_str(&format!(" {opclass}"));
+                    }
+                    col
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
         let using = idx.index_type.as_deref().map(|t| format!(" USING {t}")).unwrap_or_default();
         let include = idx
             .included_columns
