@@ -91,6 +91,7 @@ import type {
   RuleInfo,
   OwnerInfo,
   ExtensionInfo,
+  EventTriggerInfo,
   QueryResult,
   SqlReferenceAnalysis,
   DatabaseType,
@@ -2367,6 +2368,10 @@ export async function listExtensions(connectionId: string, database: string, sch
 
 export async function listAvailableExtensions(connectionId: string, database: string): Promise<ExtensionInfo[]> {
   return invoke("list_available_extensions", { connectionId, database });
+}
+
+export async function listEventTriggers(connectionId: string, database: string): Promise<EventTriggerInfo[]> {
+  return invoke("list_event_triggers", { connectionId, database });
 }
 
 // --- Docs ---

@@ -477,6 +477,7 @@ const emit = defineEmits<{
   "open-dialog-controller": [controller: Record<string, any> | null];
   "open-install-extension": [node: TreeNode];
   "open-extension-details": [node: TreeNode];
+  "open-event-trigger-details": [node: TreeNode];
 }>();
 
 const {
@@ -747,6 +748,7 @@ const groupTypes: Set<TreeNodeType> = new Set([
   "group-types",
   "group-partitions",
   "group-extensions",
+  "group-event-triggers",
   "group-tablespaces",
   "group-datafiles",
 ]);
@@ -886,7 +888,7 @@ async function toggle(requestId = beginNavigationRequest()) {
     return;
   }
 
-  if (node.type === "group-extensions" && connectionStore.canUseLoadedTreeNodeToggle(node)) {
+  if ((node.type === "group-extensions" || node.type === "group-event-triggers") && connectionStore.canUseLoadedTreeNodeToggle(node)) {
     node.isExpanded = !node.isExpanded;
     if (wasExpanded && shouldReleaseCollapsedTreeNodeChildren()) connectionStore.releaseCollapsedTreeNodeChildren(node.id);
     emitNodeToggled(node, wasExpanded);
@@ -1096,6 +1098,8 @@ async function toggle(requestId = beginNavigationRequest()) {
       await connectionStore.loadSubpartitions(node.connectionId, node.database, node.tableName, node.schema, node.id, node.catalog);
     } else if (node.type === "group-extensions" && node.connectionId && hasTreeNodeDatabaseContext(node)) {
       await connectionStore.refreshTreeNode(node);
+    } else if (node.type === "group-event-triggers" && node.connectionId && hasTreeNodeDatabaseContext(node)) {
+      await connectionStore.refreshTreeNode(node);
     }
     emitNodeToggled(node, wasExpanded);
   } catch (e: any) {
@@ -1148,6 +1152,8 @@ function runRowClickAction(clickDetail: number, requestId: number) {
     openObjectSourceDialog(false);
   } else if (action === "open-extension-details") {
     emit("open-extension-details", node);
+  } else if (action === "open-event-trigger-details") {
+    emit("open-event-trigger-details", node);
   } else if (action === "open-saved-sql") {
     void openSavedSqlFile();
   } else if (isDocumentBrowserTreeNode(node.type)) {
@@ -1554,6 +1560,8 @@ function onDoubleClick(event: MouseEvent) {
     openObjectSourceDialog(false);
   } else if (action === "open-extension-details") {
     emit("open-extension-details", activeNode.value);
+  } else if (action === "open-event-trigger-details") {
+    emit("open-event-trigger-details", activeNode.value);
   } else if (action === "open-saved-sql") {
     openSavedSqlFile();
   } else if (action === "toggle" && (activeNode.value.type === "mongo-gridfs" || isDocumentBrowserTreeNode(activeNode.value.type))) {
@@ -6146,6 +6154,12 @@ function buildSpecialSidebarMenu(context: SidebarMenuFactoryContext): boolean {
   // 8.5 Extension
   if (node.type === "extension") {
     items.push({ label: t("extension.viewDetails"), action: () => emit("open-extension-details", node), icon: Info });
+    items.push({ label: "", separator: true });
+    items.push({ label: t("contextMenu.copyName"), action: copyName, icon: Copy, shortcut: shortcutCopyName.value });
+    return true;
+  }
+  if (node.type === "event-trigger") {
+    items.push({ label: t("eventTrigger.viewDetails"), action: () => emit("open-event-trigger-details", node), icon: Info });
     items.push({ label: "", separator: true });
     items.push({ label: t("contextMenu.copyName"), action: copyName, icon: Copy, shortcut: shortcutCopyName.value });
     return true;

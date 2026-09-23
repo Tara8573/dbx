@@ -3878,7 +3878,20 @@ export default withEnglishFallback({
     loadMore: "Daha çox yüklə...",
     objectBrowser: "Obyekt brauzerində bax ({count})",
     extensions: "Genişləndirmələr",
+    eventTriggers: "Hadisə tetikleyiciləri",
   },
+  eventTrigger: {
+    detailsTitle: "Hadisə tetikleyicisi detalı",
+    viewDetails: "Detalları gör",
+    name: "Ad",
+    event: "Hadisə",
+    owner: "Sahib",
+    function: "Funksiya",
+    enabled: "Aktiv",
+    tags: "Etiketlər",
+    definition: "Tərif",
+  },
+
   extension: {
     manageTitle: "Genişləndirmələri idarə et",
     installTitle: "Genişləndirmə quraşdır",

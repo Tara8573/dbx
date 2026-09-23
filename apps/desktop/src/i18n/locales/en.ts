@@ -4153,7 +4153,20 @@ export default {
     loadMore: "Load more...",
     objectBrowser: "Browse in Object Browser ({count})",
     extensions: "Extensions",
+    eventTriggers: "Event Triggers",
   },
+  eventTrigger: {
+    detailsTitle: "Event Trigger Details",
+    viewDetails: "View details",
+    name: "Name",
+    event: "Event",
+    owner: "Owner",
+    function: "Function",
+    enabled: "Enabled",
+    tags: "Tags",
+    definition: "Definition",
+  },
+
   extension: {
     manageTitle: "Manage Extensions",
     installTitle: "Install Extension",
